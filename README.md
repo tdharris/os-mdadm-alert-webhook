@@ -276,7 +276,7 @@ Don't forget to remove the `PROGRAM` line from your mdadm.conf file.
 
 ## License
 
-This project is released under the MIT License. See the LICENSE file for details.
+This project is released under the **MIT** License. See the [LICENSE](./LICENSE) file for details.
 
 ## Support
 
