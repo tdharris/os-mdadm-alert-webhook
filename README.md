@@ -80,6 +80,17 @@ mdadm-discord-webhook --help
     # Check that monitoring is active
     sudo systemctl status mdmonitor
     ```
+   
+   > **Note:** On some systems the service might be called `mdadm` instead of `mdmonitor`
+
+6. **Restart mdmonitor to pick up configuration changes**:
+   After updating mdadm.conf, restart the monitoring service:
+   ```bash
+   sudo systemctl restart mdmonitor
+   
+   # Verify it's running
+   sudo systemctl status mdmonitor
+   ```
 
 ## Usage
 
@@ -163,6 +174,9 @@ sudo systemctl start mdmonitor
 # Verify monitoring is active
 sudo systemctl status mdmonitor
 
+# After updating mdadm.conf, restart to pick up changes
+sudo systemctl restart mdmonitor
+
 # Check what arrays are being monitored
 sudo mdadm --detail --scan
 ```
@@ -229,6 +243,7 @@ The script logs to stderr. To capture logs when run by mdadm:
 
 4. **mdadm not calling the script**
    - Verify mdadm monitoring is running: `sudo systemctl status mdmonitor`
+   - **Restart mdmonitor after config changes**: `sudo systemctl restart mdmonitor`
    - Check mdadm.conf syntax: `sudo mdadm --config-file=/etc/mdadm.conf --detail --scan`
    - Test monitoring manually: `sudo mdadm --monitor --scan --verbose --test`
    - Check system logs: `sudo journalctl -u mdmonitor -f`
