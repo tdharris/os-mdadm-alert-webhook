@@ -6,6 +6,10 @@ A single bash script that sends mdadm (Linux Software RAID) events to Discord as
 
 No installation scripts or dependencies required - just download, configure, and use!
 
+<img width="305" height="257" alt="image" src="https://github.com/user-attachments/assets/e1ffde1b-c85e-4545-a16d-65dbe23ae9f3" />
+<img width="304" height="253" alt="image" src="https://github.com/user-attachments/assets/91f6ae6f-2515-436f-8331-3845aa3c42d9" />
+<img width="306" height="256" alt="image" src="https://github.com/user-attachments/assets/63ab516d-9116-44a4-a575-d60fb87e5296" />
+
 ## Features
 
 - 🚨 **Real-time notifications** for all mdadm events (failures, rebuilds, etc.)
