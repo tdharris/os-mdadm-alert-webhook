@@ -15,6 +15,17 @@ set -euo pipefail
 # Get this from: Discord Server Settings → Integrations → Webhooks → New Webhook
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
 
+# Notification level configuration
+# NOTIFY_LEVEL options:
+#   "all"      - Notify for all events (including routine array checks)
+#   "critical" - Only critical events (failures, degraded arrays, actual rebuilds - excludes routine checks)
+NOTIFY_LEVEL="critical"
+
+# Array check notification settings
+# Set to "true" to receive notifications for routine array checks/scrubs
+# Set to "false" to suppress check notifications (recommended for most users)
+NOTIFY_ARRAY_CHECKS="false"
+
 # ==============================================================================
 # END CONFIGURATION
 # =============================================================================="
@@ -44,8 +55,15 @@ Examples:
     $0 "TestMessage" "/dev/md0"
 
 Configuration:
-    Edit the DISCORD_WEBHOOK_URL variable at the top of this script with your
-    Discord webhook URL before using.
+    Edit the configuration variables at the top of this script:
+    
+    DISCORD_WEBHOOK_URL    - Your Discord webhook URL (required)
+    NOTIFY_LEVEL          - Notification level: "all" or "critical"
+    NOTIFY_ARRAY_CHECKS   - Set to "true" to get routine array check notifications (only applies when NOTIFY_LEVEL="all")
+
+    Notification Levels:
+    • "all"      - All events (including routine array checks)
+    • "critical" - Only important events (failures, degraded arrays, actual rebuilds - excludes routine checks)
 
 This script is designed to be used with mdadm's PROGRAM configuration option
 in /etc/mdadm.conf or /etc/mdadm/mdadm.conf:
@@ -64,12 +82,26 @@ log() {
 # Function to get color based on event type
 get_event_color() {
     local event="$1"
+    local device="$2"
+    local is_check="false"
+    
+    # Check if this is an array check for rebuild events
+    if [[ "$event" =~ ^Rebuild ]]; then
+        if is_array_check "$device" "$event"; then
+            is_check="true"
+        fi
+    fi
+    
     case "$event" in
         "Fail"|"FailSpare"|"DegradedArray"|"SparesMissing")
             echo "$COLOR_ERROR"
             ;;
         "RebuildStarted"|"RebuildNN"|"RebuildFinished")
-            echo "$COLOR_WARNING"
+            if [[ "$is_check" == "true" ]]; then
+                echo "$COLOR_INFO"  # Blue for routine checks
+            else
+                echo "$COLOR_WARNING"  # Orange for actual rebuilds
+            fi
             ;;
         "TestMessage"|"NewArray"|"SpareActive")
             echo "$COLOR_SUCCESS"
@@ -86,6 +118,16 @@ get_event_color() {
 # Function to get event description
 get_event_description() {
     local event="$1"
+    local device="$2"
+    local is_check="false"
+    
+    # Check if this is an array check for rebuild events
+    if [[ "$event" =~ ^Rebuild ]]; then
+        if is_array_check "$device" "$event"; then
+            is_check="true"
+        fi
+    fi
+    
     case "$event" in
         "Fail")
             echo "A device in the array has failed"
@@ -100,13 +142,25 @@ get_event_description() {
             echo "The array is missing spare devices"
             ;;
         "RebuildStarted")
-            echo "Array rebuild has started"
+            if [[ "$is_check" == "true" ]]; then
+                echo "Routine array check/scrub has started"
+            else
+                echo "Array rebuild has started"
+            fi
             ;;
         "RebuildNN")
-            echo "Array rebuild is in progress"
+            if [[ "$is_check" == "true" ]]; then
+                echo "Routine array check/scrub is in progress"
+            else
+                echo "Array rebuild is in progress"
+            fi
             ;;
         "RebuildFinished")
-            echo "Array rebuild has finished"
+            if [[ "$is_check" == "true" ]]; then
+                echo "Routine array check/scrub has completed"
+            else
+                echo "Array rebuild has finished"
+            fi
             ;;
         "TestMessage")
             echo "Test message from mdadm"
@@ -129,6 +183,83 @@ get_event_description() {
     esac
 }
 
+# Function to detect if this is an array check vs actual rebuild
+is_array_check() {
+    local device="$1"
+    local event="$2"
+    
+    # Only check for rebuild-related events
+    if [[ ! "$event" =~ ^Rebuild ]]; then
+        return 1  # Not a rebuild event
+    fi
+    
+    # Check if device exists and get its state
+    if [[ -e "$device" ]]; then
+        local array_info
+        if array_info=$(mdadm --detail "$device" 2>/dev/null); then
+            local state
+            state=$(echo "$array_info" | grep -i "State :" | cut -d: -f2- | xargs)
+            
+            # Array check indicators:
+            # - State contains "checking" 
+            # - State is "clean" with checking/resync activity
+            if [[ "$state" =~ checking ]] || [[ "$state" == "clean, checking" ]]; then
+                return 0  # This is an array check
+            fi
+            
+            # Additional check: look for "Check Status" line which appears during checks
+            if echo "$array_info" | grep -qi "Check Status"; then
+                return 0  # This is an array check
+            fi
+        fi
+    fi
+    
+    return 1  # Assume actual rebuild if we can't determine
+}
+
+# Function to determine if event should be notified based on configuration
+should_notify() {
+    local event="$1"
+    local device="$2"
+    local is_check="$3"
+    
+    case "$NOTIFY_LEVEL" in
+        "all")
+            # All events - but check if user wants to suppress array checks
+            if [[ "$event" =~ ^Rebuild ]] && [[ "$is_check" == "true" ]] && [[ "$NOTIFY_ARRAY_CHECKS" == "false" ]]; then
+                return 1  # Suppress array checks if user doesn't want them
+            fi
+            return 0  # Notify everything else
+            ;;
+        "critical")
+            # Critical events only (excludes routine checks)
+            case "$event" in
+                "Fail"|"FailSpare"|"DegradedArray"|"SparesMissing"|"DeviceDisappeared"|"SpareActive"|"NewArray")
+                    return 0
+                    ;;
+                "Rebuild"*)
+                    # For rebuild events, only notify if it's an actual rebuild (not routine check)
+                    if [[ "$is_check" == "true" ]]; then
+                        return 1  # Suppress routine array checks
+                    else
+                        return 0  # Allow actual rebuilds
+                    fi
+                    ;;
+                "TestMessage")
+                    return 0  # Always allow test messages
+                    ;;
+                *)
+                    return 1  # Suppress other events
+                    ;;
+            esac
+            ;;
+        *)
+            log "Warning: Unknown NOTIFY_LEVEL '$NOTIFY_LEVEL', defaulting to 'all'"
+            return 0
+            ;;
+    esac
+}
+
 # Function to get hostname
 get_hostname() {
     hostname -f 2>/dev/null || hostname 2>/dev/null || echo "unknown"
@@ -137,6 +268,7 @@ get_hostname() {
 # Function to get system information
 get_system_info() {
     local device="$1"
+    local event="$2"
     local info=""
     
     # Get array status if device exists
@@ -147,10 +279,36 @@ get_system_info() {
             state=$(echo "$array_info" | grep -i "State :" | cut -d: -f2- | xargs)
             level=$(echo "$array_info" | grep -i "Raid Level :" | cut -d: -f2- | xargs)
             devices=$(echo "$array_info" | grep -i "Total Devices :" | cut -d: -f2- | xargs)
+            failed=$(echo "$array_info" | grep -i "Failed Devices :" | cut -d: -f2- | xargs)
             
             info="**Array State:** $state\\n"
             info+="**RAID Level:** $level\\n"
             info+="**Total Devices:** $devices\\n"
+            info+="**Failed Devices:** $failed\\n"
+            
+            # Add check/rebuild specific information
+            if [[ "$event" =~ ^Rebuild ]]; then
+                # Look for rebuild/check progress information
+                local progress_info
+                progress_info=$(echo "$array_info" | grep -E "(Rebuild Status|Check Status|Resync Status)" | head -1)
+                if [[ -n "$progress_info" ]]; then
+                    local progress_line
+                    progress_line=$(echo "$progress_info" | cut -d: -f2- | xargs)
+                    
+                    if is_array_check "$device" "$event"; then
+                        info+="**Check Progress:** $progress_line\\n"
+                    else
+                        info+="**Rebuild Progress:** $progress_line\\n"
+                    fi
+                fi
+                
+                # Add estimated completion time if available
+                local finish_info
+                finish_info=$(echo "$array_info" | grep -i "finish=" | sed 's/.*finish=//' | sed 's/speed=.*//' | xargs)
+                if [[ -n "$finish_info" ]]; then
+                    info+="**Estimated Completion:** $finish_info\\n"
+                fi
+            fi
         fi
     fi
     
@@ -178,9 +336,9 @@ send_discord_webhook() {
     
     hostname=$(get_hostname)
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
-    color=$(get_event_color "$event")
-    description=$(get_event_description "$event")
-    system_info=$(get_system_info "$device")
+    color=$(get_event_color "$event" "$device")
+    description=$(get_event_description "$event" "$device")
+    system_info=$(get_system_info "$device" "$event")
     
     # Build the JSON payload
     local json_payload
@@ -289,6 +447,17 @@ main() {
     
     if ! command -v mdadm >/dev/null 2>&1; then
         log "Warning: mdadm command not found, system information will be limited"
+    fi
+    
+    # Check if this event should be notified based on configuration
+    local is_check="false"
+    if is_array_check "$device" "$event"; then
+        is_check="true"
+    fi
+    
+    if ! should_notify "$event" "$device" "$is_check"; then
+        log "Event '$event' suppressed by notification level '$NOTIFY_LEVEL' (is_check=$is_check)"
+        exit 0
     fi
     
     # Send the notification

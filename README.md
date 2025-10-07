@@ -17,6 +17,9 @@ No installation scripts or dependencies required - just download, configure, and
 - 🔧 **Easy installation** with single curl command
 - 📝 **Comprehensive event handling** for all mdadm event types
 - 🛡️ **Error handling** with retries and proper logging
+- 🔍 **Smart detection** - Differentiates between array checks and actual rebuilds
+- ⚙️ **Configurable notifications** - Control what events trigger notifications
+- 📊 **Enhanced progress tracking** for rebuilds and array checks
 
 ## Quick Start
 
@@ -41,16 +44,24 @@ mdadm-discord-webhook --help
 
 ### Configuration
 
-1. **Get your Discord webhook URL** (see instructions below)
+1. **Get your Discord webhook URL** (see [Creating a Discord Webhook](#creating-a-discord-webhook))
 
 2. **Configure the script**:
-   Edit the webhook URL in the installed script:
+   Edit the configuration in the installed script:
    ```bash
    sudo vi /usr/bin/mdadm-discord-webhook
    ```
-   Find and update this line at the top of the script:
+   Update these configuration variables at the top of the script:
    ```bash
+   # Required: Your Discord webhook URL
    DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+   
+   # Optional: Notification level (default: "critical")
+   NOTIFY_LEVEL="critical"  # Options: "all", "critical"
+   
+   # Optional: Array check notifications (default: "false")
+   # Only applies when NOTIFY_LEVEL="all" - set to "true" to get routine check notifications
+   NOTIFY_ARRAY_CHECKS="false"
    ```
    
    **Note:** Bot name and avatar are configured in Discord when you create the webhook.
@@ -123,6 +134,55 @@ sudo mdadm-discord-webhook "Fail" "/dev/md0" "/dev/sda1"
 sudo mdadm-discord-webhook "RebuildStarted" "/dev/md0"
 ```
 
+## Notification Levels
+
+The script supports three notification levels to control which events trigger Discord notifications:
+
+### `NOTIFY_LEVEL` Options
+
+| Level | Description | Events Included |
+|-------|-------------|-----------------|
+| `"all"` | All events | Every mdadm event (can exclude routine checks with `NOTIFY_ARRAY_CHECKS="false"`) |
+| `"critical"` | **Recommended default** | Only important events: failures, degraded arrays, actual rebuilds (excludes routine checks) |
+
+### How the Notification Levels Work
+
+**`NOTIFY_LEVEL="critical"` (Recommended)**
+- ✅ Device failures, degraded arrays, actual rebuilds
+- ❌ Routine array checks/scrubs (suppressed automatically)
+- 🎯 **Best for most users** - get alerts for problems, not maintenance
+
+**`NOTIFY_LEVEL="all"`**  
+- ✅ Every mdadm event including routine checks
+- ⚙️ Use `NOTIFY_ARRAY_CHECKS="false"` to suppress routine checks while keeping everything else
+- 📊 **Best for detailed monitoring** or troubleshooting
+
+### Array Checks vs Rebuilds
+
+The script differentiates between:
+
+- **🔍 Array Checks/Scrubs**: Routine maintenance operations that run automatically (usually monthly)
+  - State shows "clean, checking"
+  - **Not urgent** - these are preventive maintenance
+  - Color: 🔵 Blue
+  - Can be suppressed with `NOTIFY_ARRAY_CHECKS="false"`
+
+- **⚠️ Actual Rebuilds**: Recovery operations due to failures or manual intervention  
+  - State shows "degraded, rebuilding" or triggered by device failures
+  - **Critical events** requiring attention
+  - Color: 🟠 Orange
+  - Always notified (unless `NOTIFY_LEVEL="critical"` and array isn't degraded)
+
+### Recommended Configuration
+
+For most users, the recommended settings are:
+```bash
+NOTIFY_LEVEL="critical"        # Get important events only (excludes routine checks)
+NOTIFY_ARRAY_CHECKS="false"    # Only relevant when NOTIFY_LEVEL="all"
+```
+
+This configuration will notify you of important events while avoiding noise from routine array checks.
+
 ## Supported Events
 
 The script handles all standard mdadm events with appropriate color coding:
@@ -133,9 +193,9 @@ The script handles all standard mdadm events with appropriate color coding:
 | `FailSpare` | Spare device failure | 🔴 Red |
 | `DegradedArray` | Array degraded | 🔴 Red |
 | `SparesMissing` | Missing spare devices | 🔴 Red |
-| `RebuildStarted` | Rebuild started | 🟠 Orange |
-| `RebuildNN` | Rebuild progress | 🟠 Orange |
-| `RebuildFinished` | Rebuild completed | 🟠 Orange |
+| `RebuildStarted` | Rebuild started (🔵 Blue for checks, 🟠 Orange for rebuilds) | 🟠 Orange |
+| `RebuildNN` | Rebuild progress (🔵 Blue for checks, 🟠 Orange for rebuilds) | 🟠 Orange |
+| `RebuildFinished` | Rebuild completed (🔵 Blue for checks, 🟠 Orange for rebuilds) | 🟠 Orange |
 | `TestMessage` | Test notification | 🟢 Green |
 | `NewArray` | New array created | 🟢 Green |
 | `SpareActive` | Spare activated | 🟢 Green |
